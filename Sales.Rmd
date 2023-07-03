@@ -1,0 +1,438 @@
+---
+title: 'Data Preprocessing'
+author: "Daniel Sohm"
+date: "July 2023"
+output:
+  pdf_document:
+    highlight: zenburn
+    toc: yes
+  word_document: default
+  html_document:
+    highlight: default
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 2
+---
+
+```{r, echo=FALSE, warning= FALSE, message = FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning= FALSE, message = FALSE)
+
+library("skimr")
+library("ggpubr")
+library("dlookr")
+library("tidyverse")
+library("VIM")
+library("ggthemes")
+library("glue")
+library("tidymodels")
+library("corrplot")
+library("epitools")
+library("pROC")
+library("caret")
+library("regclass")
+library("epiDisplay")
+library("oddsratio")
+library("skimr")
+library("gridExtra")
+
+```
+
+# Introduction
+
+For this project, we will work with a dataset acquired from kaggle.com. (link at the end)
+
+The dataset encompasses sales data from three different branches over a span of three months. Additionally, it includes the customers' satisfaction ratings regarding the provided customer service and other data regarding the selling process (price, amount of goods sold, etc).
+
+In this first part of our project, we will focus on preprocessing the data for further analysis, while also conducting a first exploratory data analysis.
+
+So, this project will revolve around preprocessing the data, performing a first exploratory analysis, and later apply machine learning algorithms (supervised and non supervised), to uncover potentially interesting patterns or creating predictive models.
+
+# Objectives
+
+As for objectives, the first one is to preprocess the data to match our requirements in the application of machine learning algorithms
+
+Apply machine learning algorithms such as KNN, decision tree, random forest, etc..
+
+Confirm if there is a relation between amount spent, gender or other factors and the overall satisfaction of the customer.
+
+# Exploratory Data Analysis
+
+First, lets have a first glance at our data, and see what we are working with:
+
+```{r}
+sales<-read.csv("D:/Master/Minería de datos/PRA1/Supermarket/supermarket_sales - Sheet1.csv")
+str(sales, vec.len = 10)
+
+```
+
+Attribute information: Invoice id: Computer generated sales slip invoice identification number
+
+Branch: Branch of supercenter (3 branches are available identified by A, B and C).
+
+City: Location of supercenters
+
+Customer type: Type of customers, recorded by Members for customers using member card and Normal for without member card.
+
+Gender: Gender type of customer
+
+Product line: General item categorization groups - Electronic accessories, Fashion accessories, Food and beverages, Health and beauty, Home and lifestyle, Sports and travel
+
+Unit price: Price of each product in \$
+
+Quantity: Number of products purchased by customer Tax: 5% tax fee for customer buying
+
+Total: Total price including tax
+
+Date: Date of purchase (Record available from January 2019 to March 2019)
+
+Time: Purchase time (10am to 9pm)
+
+Payment: Payment used by customer for purchase (3 methods are available -- Cash, Credit card and Ewallet)
+
+COGS: Cost of goods sold
+
+Gross margin percentage: Gross margin percentage
+
+Gross income: Gross income
+
+Rating: Customer stratification rating on their overall shopping experience (On a scale of 1 to 10)
+
+## Check for NAs and modify data
+
+After this first look, lets confirm if we have missing values in our data.
+As we have information regarding time, we can compact this in a new variable that indicates in which period during the day the sale was made.
+
+```{r}
+
+sales %>% is.na() %>% summary() #no na's
+#convert some str variables to factor
+sales<- sales %>% mutate(
+  Customer.type = ifelse(Customer.type == "Member", 0, 1),
+  Gender = ifelse(Gender == "Male", 0, 1),
+  Product.line = as.factor(Product.line),
+  Branch = as.factor(Branch),
+  City = as.factor(City),
+  Payment = as.factor(Payment),
+)
+
+sales$Datetime <- as.POSIXct(paste(sales$Date, sales$Time),
+                                 format = "%m/%d/%Y %H:%M")
+sales$hour <- as.numeric(format(sales$Datetime, "%H"))
+
+
+sales$Period <- cut(
+  x = sales$hour,
+  breaks = c(0, 6, 12, 18, 24),
+  labels = c("Night", "Morning", "Afternoon", "Evening"),
+  include.lowest = TRUE
+)
+sales <- subset(sales, select = -c(hour, Date, Time))
+
+sales %>% dplyr::select(Rating,Datetime, Period) %>% head(5)
+```
+
+We see that no variables contain missing values. We also transformed some of the variables to factors and binary based on their function. We can also see how the new column looks like after transformation.
+
+## Visual analysis
+
+Lets begin our analysis with some graphical representations, as it gives an intuitive understanding of the data.
+
+### Numeric variables
+
+```{r}
+
+plot_histogram <- function(data, column) {
+  ggplot(data, aes({{ column }})) +
+    geom_histogram(bins = 50, fill = "#69b3a2", color = "black", alpha = 0.7) +
+    geom_vline(aes(xintercept = mean({{ column }})), color = "red", linetype = "dashed", size = 1) +
+    labs(
+      title = paste("Distribution of", deparse(substitute(column))),
+      x = deparse(substitute(column)),
+      y = "Frequency"
+    ) +
+    theme_minimal()
+}
+
+
+
+
+plot1 <-plot_histogram(sales, Rating)
+plot2 <-plot_histogram(sales, Total)
+plot3 <-plot_histogram(sales, Unit.price)
+plot4 <- plot_histogram(sales, Tax.5.)
+
+
+grid.arrange(plot1,plot2,plot3,plot4, ncol = 2)
+```
+
+For the rating, we can see that it is clearly not normally distributed, the lowest rating given is 4 and it averages around 7.
+
+As for the total amount spent on purchases, it is also not normally distributed, but has a range from 0 to 1100, the mean is 300 and we can see that majority of purchases are valued around 300 or lower.
+For the other variables, the same happens and their distributions are not normal
+
+### Categoric Variables
+
+```{r}
+# Function to create count plots
+create_count_plot <- function(column_name) {
+  # Count the frequency of each level
+  level_counts <- table(sales[[column_name]])
+
+  # Create a dataframe for plotting
+  plot_data <- data.frame(Level = names(level_counts), Count = as.numeric(level_counts))
+
+  # Create the count plot
+  ggplot(plot_data, aes(x = Level, y = Count)) +
+    geom_bar(stat = "identity", fill = "steelblue") +
+    labs(x = column_name, y = "Count") +
+    ggtitle(paste("Level Counts of", column_name))
+}
+
+# Visualize the levels of each factor column
+plot1<-create_count_plot("City")
+plot2<-create_count_plot("Branch")
+plot3<-create_count_plot("Payment")
+plot4<-create_count_plot("Period")
+grid.arrange(plot1,plot2,plot3,plot4, ncol = 2)
+
+```
+Branch and City have almost the same counts (makes sense as 1 city per branch).
+
+However, we can observer that majority of sales are made in the afternoon and evenings. Preferred payment methods are also pretty evenly distributed. 
+
+### Comparison of variables graphically
+
+```{r}
+#function to compare categoric and numeric variables graphically
+compare_fact_num <- function(data, factor_col, numeric_col) {
+  ggplot(data, aes(x = {{factor_col}}, y = {{numeric_col}})) +
+    geom_boxplot(fill = "#69b3a2", color = "black", alpha = 0.7) +
+    labs(
+      title = paste(deparse(substitute(numeric_col)), "by", deparse(substitute(factor_col))),
+      x = deparse(substitute(factor_col)),
+      y = deparse(substitute(numeric_col))
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 18, face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 12)
+    )
+}
+
+compare_numeric_columns <- function(data, x_col, y_col) {
+  ggplot(data, aes(x = {{x_col}}, y = {{y_col}})) +
+    geom_point(color = "#4287f5", alpha = 0.7) +
+    geom_smooth(method = lm, color = "#f55c42", fill = "#fdd0c7", alpha = 0.3) +
+    labs(
+      title = paste(deparse(substitute(x_col)), "vs", deparse(substitute(y_col))),
+      x = deparse(substitute(x_col)),
+      y = deparse(substitute(y_col))
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 18, face = "bold"),
+      axis.text = element_text(size = 12),
+      axis.title = element_text(size = 14),
+      legend.title = element_blank(),
+      legend.text = element_text(size = 12),
+    )
+}
+```
+
+Lets take a closer look at the relationships our variables may present. For this, we can plot variables againts another
+
+```{r}
+
+sales$gender <-factor(sales$Gender, levels = c(0, 1), labels = c("Male", "Female"))
+
+sales$customer.type <-factor(sales$Customer.type, levels = c(0, 1), labels = c("Member", "Normal"))
+
+plot1<-compare_fact_num(sales, gender, Rating)
+plot2<-compare_fact_num(sales, customer.type, Rating)
+plot3<-compare_fact_num(sales, Product.line, Rating)
+plot1 <- plot1 + theme(
+      plot.title = element_text(size = 18, face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 8)
+    )
+plot4<-compare_fact_num(sales, City, Rating)+ theme(
+      plot.title = element_text(size = 18, face = "bold"),
+      axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 8)
+    )
+plot5<-compare_fact_num(sales, Period, Rating)
+
+sales <- subset(sales, select = -c(gender, customer.type))
+
+grid.arrange(plot1,plot2,plot4,plot5, ncol = 2)
+
+plot3
+```
+
+We already see a clear difference in satisfaction between purchases made in the morning, than the afternoon. However, satisfaction seems to not very between Male and Female. Rating means vary between servises purchased, being sports and travel the worst rated and food and beverages best rated. It also seems like customers are more prone to be stisfied in the morning than in the evenings. We can also see that there is a clear difference between ratings for Mandalay than the other 2
+
+```{r}
+plot1<-compare_numeric_columns(sales, Unit.price, Rating)
+plot2<-compare_numeric_columns(sales, Total, Rating)
+plot3<-compare_numeric_columns(sales, gross.income, Rating)
+grid.arrange(plot1,plot2,plot3, ncol = 2)
+
+```
+
+No visible correlation between the price of the item and satisfaction of the customer, which may seems strange because you want high paying customers to be treated better.
+
+There is a slight negative relation between total paid and rating, this could be due to the fact that if a customer pays more, he expects better service. There is a slight negative realtion between the rating and the gross income, which goes down with the rating. which is to be expected
+
+
+## Correlation
+
+Lets now check for correlation between our variables.
+
+```{r}
+
+sales_numeric <- sales %>% select_if(is.numeric)
+
+corrplot(cor(sales_numeric))
+
+```
+
+We can see that we have predictos with high correlation, but since we are not building regression models we will leave them as is for now, as clustering algorithms are not that sensible to colinearity, nor to data distribution. However, if we want to construct regression models, this issue might has to be addressed
+
+## Normalizing and outlier removal
+
+As ml algorithms are sensible to non normalized data and outliers, we will transform out data to fit our needs As for the outliers, we will use it on the normalized data, and remove outliers based on IQR.
+
+```{r}
+sales_names <- names(sales)
+sales_norm<- c("Unit.price", "Quantity", "Tax.5.", "Total", "cogs", "gross.income", "Rating")
+
+
+sales[, sales_norm] <- scale(sales[, sales_norm])
+
+colnames(sales)<- sales_names
+head(sales[5:17]) #visualize normalized data
+```
+
+Here we can see the data after the numeric variables have been normalized
+
+```{r}
+#Removing outliers with IQR
+remove_outliers <- function(data, col_name) {
+  Q1 <- quantile(data[[col_name]], 0.25)
+  Q3 <- quantile(data[[col_name]], 0.75)
+  IQR <- Q3 - Q1
+
+  lower_range <- Q1 - 1.5 * IQR
+  upper_range <- Q3 + 1.5 * IQR
+
+  return(data[(data[[col_name]] >= lower_range) & (data[[col_name]] <= upper_range), ])
+}
+
+
+for (i in sales_norm){
+  sales <- remove_outliers(sales, i)
+}
+
+length(sales$Invoice.ID) #visualize that we have dropped only 9 obeservations, so no not many outliers present
+```
+
+As we can see, we have only discarded 9 observations, so the data doesnt present a lot of outliers
+
+## Coding variables
+
+To remove string variables, we will code each factor variable to only contain numbers. Coding will be done in factor level order, so first level is 1, and so on
+
+```{r}
+
+
+factor_columns <- sales %>%
+  select_if(is.factor)
+factor_names<- names(factor_columns)
+sales[factor_names] <- lapply(sales[factor_names], as.integer)
+
+head(sales)
+
+
+```
+
+Quick look at factors and the levels and count in each factor.
+
+After these modifications, we have only some columns left that have not been adjusted to fit later algorithm application
+
+#Single Value Decomposition
+
+SVD plays a fundamental role in PCA, a technique used for dimensionality reduction and data visualization. It identifies the principal components (linear combinations of the original variables) that capture the maximum variance in the data.
+
+Interpretation of Single, Left, and Right Vector Values:
+
+Singular Values: The singular values in quantify the importance of each dimension in the reduced space. Larger singular values indicate more significant dimensions that capture a greater amount of variance or information in the data. They are often used to determine the rank or dimensionality of the reduced space.
+
+Left Singular Vectors: The columns of the U matrix are the left singular vectors. Each column represents a vector that captures the relationships between the original variables i.Left singular vectors provide a basis for the reduced space and can be interpreted as a set of new variables that are linear combinations of the original variables.
+
+Right Singular Vectors: The columns of the V matrix are the right singular vectors. Each column represents a vector that captures the relationships between the observations in the data. ##Single vlaues vector
+
+```{r}
+
+sales_svd <- dplyr::select(sales, -Invoice.ID, -gross.margin.percentage, -Datetime)
+
+sales_svd <- as.matrix(sales_svd)
+
+svd_result <- svd(sales_svd)
+
+# Extract the singular values, left singular vectors, and right singular vectors
+singular_values <- svd_result$d
+left_singular_vectors <- svd_result$u
+right_singular_vectors <- svd_result$v
+
+# Print the results
+print(singular_values)
+
+
+
+```
+
+Here we can see the values of the singular values vector, which amount of variability or importance is associated with the corresponding mode or component. Larger singular values represent more significant modes. Therefore, having higher singular values is generally considered more desirable. In summary, higher singular values indicate more important and significant modes, while smaller singular values correspond to less significant modes. Therefore, having higher singular values is generally preferred when analyzing the results of SVD. We can see that the last 3 variables which correspond to rating, gross income and period.
+
+##Left Singular values vector
+
+```{r}
+left_values<-as.data.frame(left_singular_vectors)
+head(left_values)
+
+# Select the columns to plot
+column1 <- 1  # Index of the first column to plot
+column2 <- 2  # Index of the second column to plot
+
+# Generate scatter plot of Left Singular Vector 1 against Left Singular Vector 2
+ggplot(left_values, aes(x = V3, y = V7)) +
+  geom_point() +
+  labs(x = "Left Singular Vector 1", y = "Left Singular Vector 2",
+       title = "Scatter plot of Left Singular Vectors 1 and 2")+
+  geom_smooth(method = "lm", se = FALSE)
+
+ggplot(left_values, aes(x = V9, y = V10)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(x = "Left Singular Vector 1", y = "Left Singular Vector 2",
+       title = "Scatter plot of Left Singular Vectors 1 and 2 with Regression Line")
+
+```
+
+The left singular vectors represent the patterns or directions in the original dataset that contribute the most to the variability captured by the singular value decomposition (SVD). Each column of the left singular vector matrix corresponds to a different mode or component. It also provides insights into the relationship. Each element in a left singular vector represents the weight or contribution of a specific variable to a mode. Looking for patterns of positive or negative weights across variables may help understanding how they interact or contribute to the variability in each mode. A pronounced slope indicates high correlation, while a random scatterplot indicates low relation. We can also discern clear clusters in the graphs, which is to be expected as it indicated groups with similar characteristics, given that there are several locations, so behavior differs.
+
+##Right Singular vectors
+
+```{r}
+right_values<- as.data.frame(right_singular_vectors)
+ggplot(right_values, aes(x = V9, y = V10)) +
+  geom_point() +
+  labs(x = paste0("Right Singular Vector ", column1),
+       y = paste0("Right Singular Vector ", column2),
+       title = paste0("Scatter plot of Right Singular Vectors ", column1, " and ", column2))
+
+```
+
+It represents the relationships between the original variables or features in the dataset and the singular value components. Each right singular vector corresponds to a singular value and provides information about how the original variables contribute to that singular value component. Larger magnitudes indicate that the corresponding variables have a stronger influence on that singular value component. Exploring the patterns within each right singular vector may help identify any underlying structures or relationships between variables. Variables with larger contributions play a more significant role in explaining the variability captured by the corresponding singular value. Again, if we plot some of the variables, we can spot clustering, but this again is expected
+
+No dimension reduction is going to happen however, as there are not a lot of variables to work with in the first place. However, it is interesting to have insight about how our data is structured and the relation between the variables we are working with
+
+Source and credits for dataset: <https://www.kaggle.com/datasets/aungpyaeap/supermarket-sales>
