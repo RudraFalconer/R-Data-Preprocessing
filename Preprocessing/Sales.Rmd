@@ -295,7 +295,7 @@ corrplot(cor(sales_numeric))
 
 ```
 
-We can see that we have predictos with high correlation, but since we are not building regression models we will leave them as is for now, as clustering algorithms are not that sensible to colinearity, nor to data distribution. However, if we want to construct regression models, this issue might has to be addressed
+We can see that we have predictos with high correlation, but since we are not building regression models we will leave them as is for now, as clustering algorithms are not that sensible to colinearity, nor to data distribution. However, if we want to construct regression models, this issue might has to be addressed.
 
 ## Normalizing and outlier removal
 
